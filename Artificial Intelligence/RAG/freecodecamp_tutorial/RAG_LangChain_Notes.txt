@@ -1,0 +1,187 @@
+LANGCHAIN RAG: COMPONENTS AND HOW THEY FIT TOGETHER
+
+1. What is RAG?
+
+RAG stands for Retrieval-Augmented Generation. It combines document search with a language model:
+
+1. Load source material, such as web pages.
+2. Split it into smaller chunks.
+3. Convert chunks into embeddings and store them in a vector database.
+4. Retrieve chunks relevant to a user’s question.
+5. Give the question and retrieved context to a language model.
+6. Return the model’s answer.
+
+The model can then answer using the retrieved material instead of relying only on its training data.
+
+2. Main imports
+
+from langchain_classic import hub
+
+hub
+The LangChain Hub provides reusable prompts and other assets. A prompt can be pulled from the Hub and then filled with retrieved context and a question. Hub usage is optional; prompts can also be written directly in your code.
+
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+RecursiveCharacterTextSplitter
+Splits long documents into smaller text chunks. It tries to split at natural boundaries—such as paragraphs and sentences—before splitting more aggressively.
+
+Common settings:
+- chunk_size: the approximate maximum size of each chunk.
+- chunk_overlap: how much text neighboring chunks share. Overlap can help preserve context that falls near a chunk boundary.
+
+from langchain_community.document_loaders import WebBaseLoader
+
+WebBaseLoader
+Fetches web-page content and returns LangChain Document objects. A Document commonly has:
+- page_content: the extracted text.
+- metadata: information such as the source URL.
+
+Web pages may include navigation and other content that is not useful for answering questions, so inspect loaded documents when results seem poor.
+
+from langchain_community.vectorstores import Chroma
+
+Chroma
+A vector store that keeps document chunks and their embeddings. It can search for chunks whose meanings are similar to a query, rather than relying only on exact keyword matches.
+
+A retriever is often created from a vector store. It provides a standard interface for searching and returning relevant documents.
+
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+GoogleGenerativeAIEmbeddings
+Converts text into numerical vectors called embeddings. Texts with related meanings tend to have vectors that are close together in the embedding space.
+
+Documents and queries must use compatible embeddings for similarity search to work correctly.
+
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+ChatGoogleGenerativeAI
+Connects LangChain to a Google Gemini chat model. It sends messages to the configured model and returns a response. The model name, available features, latency, and access depend on Google’s current API and the account’s permissions.
+
+from langchain_core.runnables import RunnablePassthrough
+
+RunnablePassthrough
+Passes its input through unchanged. In a RAG chain, it can preserve the original question while another branch retrieves context using that question.
+
+from langchain_core.output_parsers import StrOutputParser
+
+StrOutputParser
+Extracts a plain-text string from the language model’s output message. This is useful when the caller wants the answer text rather than a message object containing additional metadata.
+
+3. Important LangChain objects
+
+Document
+A LangChain object that holds text and metadata. Loaders produce documents; splitters typically produce smaller documents from them.
+
+Embedding
+A numerical representation of text used for semantic similarity search.
+
+Vector store
+The database or index that stores embeddings and associated documents. Chroma is one example.
+
+Retriever
+An interface that takes a query and returns relevant documents from a data source, often a vector store.
+
+Prompt
+A template that combines values such as context and question into instructions for the model.
+
+Runnable / chain
+A component that can receive an input and produce an output. LangChain’s pipe operator, |, composes runnables into a sequence.
+
+4. Typical document-ingestion workflow
+
+# Load web pages
+docs = WebBaseLoader("https://example.com").load()
+
+# Split documents into chunks
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1000,
+    chunk_overlap=150,
+)
+chunks = splitter.split_documents(docs)
+
+# Create a vector store from the chunks
+vectorstore = Chroma.from_documents(chunks, embeddings)
+
+# Create a retriever for similarity search
+retriever = vectorstore.as_retriever()
+
+The exact URL and chunk settings should suit the source material. For a large or frequently updated collection, consider persistent storage and a repeatable indexing process.
+
+5. How a RAG chain works
+
+Example:
+
+rag_chain = (
+    {"context": retriever, "question": RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+
+This chain has these stages:
+
+A. Input
+Calling rag_chain.invoke("What is task decomposition?") supplies the question to the chain.
+
+B. Build the input dictionary
+The first mapping creates two values:
+- "context": the retriever uses the question to find relevant documents.
+- "question": RunnablePassthrough forwards the original question unchanged.
+
+The result is conceptually similar to:
+{
+    "context": [relevant documents],
+    "question": "What is task decomposition?"
+}
+
+C. Format the prompt
+The prompt combines the retrieved documents and the question into instructions for the model. Its variable names must match the keys provided to it.
+
+D. Generate an answer
+The Gemini model receives the formatted prompt and generates a response.
+
+E. Parse the output
+StrOutputParser converts the model response to a plain-text string.
+
+F. Return the answer
+The result of rag_chain.invoke(...) is the final answer text.
+
+6. Calling a retriever directly
+
+Use the public invoke method:
+
+docs = retriever.invoke("What is task decomposition?")
+
+for doc in docs:
+    print(doc.page_content)
+
+Avoid calling private methods such as _get_relevant_documents directly. Their internal arguments, such as run_manager, are managed by LangChain and can vary by version.
+
+7. Useful distinctions
+
+- Loading gets source content into the application.
+- Splitting divides content into searchable pieces.
+- Embedding represents text as vectors.
+- Indexing stores those vectors and their associated documents.
+- Retrieval searches for relevant chunks.
+- Generation uses the retrieved context to produce an answer.
+
+A language model does not automatically search your Chroma database. The retriever and chain connect the search results to the model’s prompt.
+
+8. Troubleshooting notes
+
+Slow model response or HTTP 504
+A 504 DEADLINE_EXCEEDED means the request did not finish before the service deadline. It is different from a Python syntax error. Check whether it is temporary, whether the model is accessible, and whether a faster model is available for your account. A longer client timeout only allows waiting longer; it does not make the service respond faster.
+
+LangSmith HTTP 403
+LangSmith tracing is separate from the Gemini request. A 403 while uploading a trace usually indicates an issue with the LangSmith key or workspace configuration. If tracing is not needed, disable it before starting the notebook kernel, then restart the kernel.
+
+USER_AGENT warning
+A warning that USER_AGENT is not set is about identifying web requests, often from a web loader. It is not by itself evidence that a Gemini model call failed.
+
+Notebook output
+A cell that calls a model displays its result only after the request finishes. For a more readable result, print the parsed text rather than the full response object. Some Gemini responses may include metadata in addition to the answer.
+
+9. API key safety
+
+Use environment variables or a secure prompt for API keys. Do not write real keys directly into notebooks, source files, screenshots, or shared output. If a key has been exposed, revoke it and create a replacement.

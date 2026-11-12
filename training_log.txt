@@ -1,0 +1,2 @@
+Epoch1 : Loss = 0.4 
+Epoch2 : Loss = 0.3 

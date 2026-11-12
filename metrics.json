@@ -1,0 +1,5 @@
+{
+    "Model_Name": "Qwen3.5 27B",
+    "Accuracy": 0.731,
+    "Epochs_Trained": 100
+}
